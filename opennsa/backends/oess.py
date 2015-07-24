@@ -19,17 +19,18 @@ import random
 import urllib2
 import json
 
+import logging
+
 def oess_get_wg_id(url, wg):
     """ Get WG_ID using Workgroup on opennsa.conf
         Reuses http session created by oess_authenticate function
     """
 
-    query, action = 'data.cgi?action=get_workgroups'
+    query = 'services/data.cgi?action=get_workgroups'
     tmp = urllib2.urlopen(url + query )
-    tmp2 = tmp.read()
 
     # Extract the WG_ID from the json output and return it
-    jsonData = json.loads(tmp2)
+    jsonData = json.loads(tmp.read())
     searchResults = jsonData['results']
     for er in searchResults:
        if er['name'] == wg:
@@ -41,12 +42,12 @@ def oess_get_wg_id(url, wg):
     log.msg('OESS: unable to find workgroup named: %s' % (wg), logLevel = logging.ERROR)
 
 
-def oess_authenticate(url, user, pw, log_system):
+def oess_authenticate(url, user, pw, wg, log_system):
     """ Authenticate against OESS using HTTPBasicAuth
         Creates a opener for future queries
     """
     # Debug
-    log.msg('OESS: oess_authenticate and url: %s' % (url), logLevel = logging.DEBUG)
+    log.msg('OESS: oess_authenticate and url: %s' % (url), logLevel=logging.DEBUG)
 
     # create a password manager
     password_mgr = urllib2.HTTPPasswordMgrWithDefaultRealm()
@@ -74,25 +75,25 @@ def oess_authenticate(url, user, pw, log_system):
        log.err()
        return defer.fail(error.InternalNRMError('OESS\'s User or Password Incorrect'))
 
-def oess_valid_interface(url, interface):
+def oess_validate_interface(url, interface):
     #parse the interface/switch/vlan tag
     (sw,int_vlan) = interface.split(':')
-    (int_name,vlan) = int_vlan.split('#')
+    (iface,vlan) = int_vlan.split('#')
 
     #request the data about the interface
-    query, action = 'data.cgi?', 'action=get_node_interfaces&node='
-    data = urllib2.urlopen(url + query + action + switch)
+    query, action = 'services/data.cgi?', 'action=get_node_interfaces&node='
+    data = urllib2.urlopen(url + query + action + sw)
     jsonData = json.loads(data.read())
     searchResults = jsonData['results']
     if_exist = 0
     for res in searchResults:
-        if res['name'] == if1:
+        if res['name'] == iface:
             if_exist = 1
     if if_exist == 0:
-        return defer.fail(error.InternalNRMError('ERROR: Configured interface %s does not exist' % if1))
+        return defer.fail(error.InternalNRMError('ERROR: Configured interface %s does not exist' % iface))
 
     #verify the interface
-    query = 'data.cgi?action=is_vlan_tag_available&node=%s&vlan=%s&interface=%s' % (sw,vlan,int_name)
+    query = 'services/data.cgi?action=is_vlan_tag_available&node=%s&vlan=%s&interface=%s' % (sw,vlan,iface)
     data = urllib2.urlopen(url + query)
     jsonData = json.loads(data.read())
     searchResults = jsonData['results']
@@ -102,9 +103,9 @@ def oess_valid_interface(url, interface):
         if searchResults[0]['available'] == 0:
             return defer.fail(error.InternalNRMError('ERROR: VLAN %s not available on interface %s' % (vlan, iface)))
     else:
-        return defer.fail(error.InternalNRMError('ERROR: interface %s does not exist on switch %s' % (iface, s)))
+        return defer.fail(error.InternalNRMError('ERROR: interface %s does not exist on switch %s' % (iface, sw)))
 
-    return sw, int_name, vlan
+    return sw, iface, vlan
 
 def oess_validate_input(url, input1, input2):
     """ Validate switches, interfaces and VLANs chosen
@@ -122,13 +123,13 @@ def oess_validate_input(url, input1, input2):
 def find_path(url, sw1, sw2, used_links):
     # Find primary path
 
-    query = 'data.cgi?action=get_shortest_path&node=%s&node=%s' % (sw1, sw2)
+    query = 'services/data.cgi?action=get_shortest_path&node=%s&node=%s' % (sw1, sw2)
 
     for link in used_links:
         query += "&link=%s" % (link)
 
     data = urllib2.urlopen(url + query)
-    jsonData = json.loads(tmp.read())
+    jsonData = json.loads(data.read())
     searchResults = jsonData['results']
     path = []
     if searchResults:
@@ -146,7 +147,7 @@ def oess_provision_circuit(url, wg_id ,sw1, sw2, if1, if2, vlan1, vlan2):
     # Debug
     log.msg('OESS: oess_provision_circuit', logLevel = logging.DEBUG)
 
-    provision_string = 'action=provision_circuit&workgroup_id=%s&node=%s&interface=%s&tag=%s&node=%s&interface=%s&tag=%s' % (sw1, if1, vlan1, sw2, if2, vlan2)
+    provision_string = 'action=provision_circuit&workgroup_id=%s&node=%s&interface=%s&tag=%s&node=%s&interface=%s&tag=%s' % (wg_id, sw1, if1, vlan1, sw2, if2, vlan2)
 
     primary_path = find_path(url, sw1, sw2, [])
     backup_path = find_path(url, sw1, sw2, primary_path)
@@ -158,10 +159,10 @@ def oess_provision_circuit(url, wg_id ,sw1, sw2, if1, if2, vlan1, vlan2):
         provision_string += "&backup_link=" + link
 
     #start/end times
-    provision_string += 'provision_time=-1&remove_time=-1&description=NSI-VLAN %s' % (vlan1)
+    provision_string += '&provision_time=-1&remove_time=-1&description=NSI-VLAN-%s' % (vlan1)
 
     # start and remove time are handled by OpenNSA, so we set as -1
-    query = 'provisioning.cgi?' + provisioning_string
+    query = 'services/provisioning.cgi?' + provision_string
     request = urllib2.urlopen(url + query)
     jsonData = json.loads(request.read())
 
@@ -178,7 +179,7 @@ def oess_remove_circuit(url, circuit_id, wg_id):
     # Debug
     log.msg('OESS: oess_remove_circuit')
 
-    action = 'provisioning.cgi?action=remove_circuit&circuit_id=%s&remove_time=-1&workgroup_id=%s' % (circuit_id, wg_id)
+    action = 'services/provisioning.cgi?action=remove_circuit&circuit_id=%s&remove_time=-1&workgroup_id=%s' % (circuit_id, wg_id)
     request = urllib2.urlopen(url + action)
     jsonData = json.loads(request.read())
     searchResults = jsonData['results']
@@ -209,7 +210,7 @@ class OESSConnectionManager:
         self.password = cfg[config.OESS_PASSWORD]
         self.workgroup = cfg[config.OESS_WORKGROUP]
 
-        self.wg_id = oess_authenticate(self.url, self.username, self.password, log_system)
+        self.wg_id = oess_authenticate(self.url, self.username, self.password, self.workgroup, log_system)
 
 
     def getResource(self, port, label_type, label_value):
