@@ -57,6 +57,10 @@ def setupBackend(backend_cfg, network_name, nrm_ports, parent_requester):
         from opennsa.backends import ncsvpn
         BackendConstructer = ncsvpn.NCSVPNBackend
 
+    elif backend_type == config.BLOCK_OESS:
+            from opennsa.backends import oess
+            BackendConstructer = oess.OESSBackend
+
     else:
         raise config.ConfigurationError('No backend specified')
 

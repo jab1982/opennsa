@@ -3,15 +3,14 @@
 
   Created by Jeronimo Bezerra/AmLight - jab@amlight.net
   Enhanced by AJ Ragusa GlobalNOC - aragusa@grnoc.iu.edu
+  Comments by Henrik Jensen - htj@nordu.net
 
 """
 from twisted.python import log
 from twisted.internet import defer
 
 from opennsa.backends.common import genericbackend
-
 from opennsa import constants as cnt, config
-
 from opennsa import error
 
 import string
@@ -66,6 +65,10 @@ def oess_authenticate(url, user, pw, log_system):
        # Install the opener.
        # Now all calls to urllib2.urlopen use our opener.
        urllib2.install_opener(opener)
+
+       # Return the wg_id
+       wg_id = oess_get_wg_id(url, wg)
+       return wg_id
     except:
        log.msg('ERROR: User or Password Incorrect.', logLevel = logging.ERROR)
        log.err()
@@ -175,7 +178,7 @@ def oess_remove_circuit(url, circuit_id, wg_id):
     # Debug
     log.msg('OESS: oess_remove_circuit')
 
-    action = 'provisioning.cgi?action=remove_circuit&circuit_id=' + circuit_id + '&remove_time=-1&workgroup_id=' + wg_id
+    action = 'provisioning.cgi?action=remove_circuit&circuit_id=%s&remove_time=-1&workgroup_id=%s' % (circuit_id, wg_id)
     request = urllib2.urlopen(url + action)
     jsonData = json.loads(request.read())
     searchResults = jsonData['results']
@@ -238,8 +241,7 @@ class OESSConnectionManager:
         # Debug
         log.msg('OESS: setupLink',system=self.log_system)
         sw1, sw2, if1, if2, vlan1, vlan2 = oess_validate_input(self.url, source_target, dest_target)
-        wg_id = oess_get_wg_id(self.url, self.workgroup)
-        self.circuit_id = oess_provision_circuit(self.url, wg_id, sw1, sw2, if1, if2, vlan1, vlan2)
+        self.circuit_id = oess_provision_circuit(self.url, self.wg_id, sw1, sw2, if1, if2, vlan1, vlan2)
         log.msg('Link %s -> %s up, circuit_id = %s' % (source_target, dest_target, self.circuit_id), system=self.log_system)
         return defer.succeed(None)
 
@@ -247,7 +249,6 @@ class OESSConnectionManager:
     def teardownLink(self, connection_id, source_target, dest_target, bandwidth):
         # Debug
         log.msg('OESS: teardownLink and self.circuit_id = %s' % self.circuit_id, system=self.log_system)
-        wg_id = oess_get_wg_id(self.url, self.workgroup)
-        oess_remove_circuit(self.url, self.circuit_id, wg_id)
+        oess_remove_circuit(self.url, self.circuit_id, self.wg_id)
         log.msg('Link %s -> %s down' % (source_target, dest_target), system=self.log_system)
         return defer.succeed(None)
